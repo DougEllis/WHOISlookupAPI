@@ -1,0 +1,41 @@
+# Load required module
+Install-Module -Name ImportExcel -Scope CurrentUser -Force
+Import-Module ImportExcel
+
+# File containing domain list
+$domainListPath = "C:\Path\To\domains.txt"   # One domain per line
+$outputExcelPath = "C:\Path\To\dns_records.xlsx"
+
+# DNS record types to query
+$recordTypes = @("A", "MX", "CNAME", "NS", "TXT")
+
+# Prepare output data
+$results = @()
+
+# Loop through each domain
+Get-Content $domainListPath | ForEach-Object {
+    $domain = $_.Trim()
+    if (-not $domain) { return }
+
+    foreach ($type in $recordTypes) {
+        try {
+            $dnsRecords = Resolve-DnsName -Name $domain -Type $type -ErrorAction SilentlyContinue
+            foreach ($rec in $dnsRecords) {
+                $results += [PSCustomObject]@{
+                    Domain     = $domain
+                    RecordType = $rec.QueryType
+                    HostName   = $rec.Name
+                    Data       = $rec.IPAddress ?? $rec.NameExchange ?? $rec.CanonicalName ?? $rec.Text
+                    TTL        = $rec.Ttl
+                }
+            }
+        } catch {
+            Write-Warning "Failed to get $type record for $domain"
+        }
+    }
+}
+
+# Export to Excel
+$results | Export-Excel -Path $outputExcelPath -WorksheetName "DNS_Records" -AutoSize -Force
+
+Write-Host "`n DNS record export complete: $outputExcelPath"
