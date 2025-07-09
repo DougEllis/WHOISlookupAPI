@@ -1,0 +1,56 @@
+# Ensure the ImportExcel module is available
+Import-Module ImportExcel -ErrorAction Stop
+
+# Path to folder with JSON files
+$folderPath = "C:\scripts\Jsonfiles"  # <-- Change this!
+$outputExcel = "C:\scripts\excel.xlsx"  # <-- Change this too!
+
+# Create an array to hold the result
+$data = @()
+
+# Get all .json files in the folder
+Get-ChildItem -Path $folderPath -Filter *.json | ForEach-Object {
+    $file = $_.FullName
+
+    try {
+        $json = Get-Content $file -Raw | ConvertFrom-Json
+        $record = $json.WhoisRecord
+
+        if ($record) {
+            $data += [PSCustomObject]@{
+                FileName            = $_.Name
+                DomainName          = $record.domainName
+                CreatedDate         = $record.createdDate
+                UpdatedDate         = $record.updatedDate
+                ExpiresDate         = $record.expiresDate
+                RegistrarName       = $record.registrarName
+                RegistrarIANAID     = $record.registrarIANAID
+                DomainExtension     = $record.domainNameExt
+                ContactEmail        = $record.contactEmail
+                EstimatedDomainAge  = $record.estimatedDomainAge
+
+                RegistrantName      = $record.registrant.name
+                RegistrantOrg       = $record.registrant.organization
+                RegistrantEmail     = $record.registrant.email
+                RegistrantPhone     = $record.registrant.telephone
+                RegistrantCity      = $record.registrant.city
+                RegistrantState     = $record.registrant.state
+                RegistrantCountry   = $record.registrant.country
+
+                TechContactName     = $record.technicalContact.name
+                TechContactEmail    = $record.technicalContact.email
+                TechContactPhone    = $record.technicalContact.telephone
+
+                NameServers         = ($record.nameServers.hostNames -join ", ")
+                Status              = $record.status
+}
+        }
+    } catch {
+        Write-Warning "Failed to parse $_.Name: $_"
+    }
+}
+
+# Export to Excel
+$data | Export-Excel -Path $outputExcel -WorksheetName "WHOIS Records" -AutoSize -Force
+
+Write-Host "`n Exported all WHOIS data to: $outputExcel"
