@@ -1,18 +1,17 @@
-# Load required module
-Install-Module -Name ImportExcel -Scope CurrentUser -Force
-Import-Module ImportExcel
+# Ensure ImportExcel is available
+Import-Module ImportExcel -ErrorAction Stop
 
-# File containing domain list
-$domainListPath = "C:\Path\To\domains.txt"   # One domain per line
-$outputExcelPath = "C:\Path\To\dns_records.xlsx"
+# === CONFIGURATION ===
+$domainListPath   = "C:\Path\To\domains.txt"     # Replace with your domain list file
+$outputExcelPath  = "C:\Path\To\dns_records.xlsx" # Replace with your desired Excel output path
 
 # DNS record types to query
-$recordTypes = @("A", "MX", "CNAME", "NS", "TXT")
+$recordTypes = @("A", "MX", "NS", "CNAME", "TXT")
 
-# Prepare output data
+# Result storage
 $results = @()
 
-# Loop through each domain
+# Read and process each domain
 Get-Content $domainListPath | ForEach-Object {
     $domain = $_.Trim()
     if (-not $domain) { return }
@@ -21,21 +20,38 @@ Get-Content $domainListPath | ForEach-Object {
         try {
             $dnsRecords = Resolve-DnsName -Name $domain -Type $type -ErrorAction SilentlyContinue
             foreach ($rec in $dnsRecords) {
+                # Handle different record types
+                $data = if ($rec.IPAddress) {
+                    $rec.IPAddress
+                } elseif ($rec.NameExchange) {
+                    $rec.NameExchange
+                } elseif ($rec.CanonicalName) {
+                    $rec.CanonicalName
+                } elseif ($rec.Text) {
+                    ($rec.Text -join " ")
+                } else {
+                    ""
+                }
+
+                # Add to results
                 $results += [PSCustomObject]@{
                     Domain     = $domain
                     RecordType = $rec.QueryType
                     HostName   = $rec.Name
-                    Data       = $rec.IPAddress ?? $rec.NameExchange ?? $rec.CanonicalName ?? $rec.Text
+                    Data       = $data
                     TTL        = $rec.Ttl
                 }
             }
         } catch {
-            Write-Warning "Failed to get $type record for $domain"
+            Write-Warning "Failed to get $type record for $domain: $_"
         }
     }
 }
 
 # Export to Excel
-$results | Export-Excel -Path $outputExcelPath -WorksheetName "DNS_Records" -AutoSize -Force
-
-Write-Host "`n DNS record export complete: $outputExcelPath"
+if ($results.Count -gt 0) {
+    $results | Export-Excel -Path $outputExcelPath -WorksheetName "DNS_Records" -AutoSize -Force
+    Write-Host "`n DNS records exported to: $outputExcelPath"
+} else {
+    Write-Warning "No DNS records were found or processed."
+}
