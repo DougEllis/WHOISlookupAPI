@@ -1,0 +1,117 @@
+# Replace with your actual API key
+$apiKey = "*****************"
+
+# Output paths
+$outputCsv = "C:\scripts\whois_results.csv"
+$rawOutputDir = "C:\scripts\whois_raw_json"
+
+# List of domains to query
+$domains = @(
+    "google.com",
+    "microsoft.com",
+    "openai.com",
+    "example.org"
+)
+
+# Ensure output folder exists
+if (!(Test-Path $rawOutputDir)) {
+    New-Item -Path $rawOutputDir -ItemType Directory | Out-Null
+}
+
+# API base URL
+$apiBaseUrl = "https://www.whoisxmlapi.com/whoisserver/WhoisService"
+
+# Initialize results array
+$results = @()
+
+# Validate domains
+function Is-ValidDomain($domain) {
+    return $domain -match '^(?!-)(?:[a-zA-Z0-9-]{1,63}(?<!-)\.)+[a-zA-Z]{2,}$'
+}
+
+# Flatten nested objects
+function Flatten-Object($object, $prefix = "") {
+    $flattened = @{}
+
+    foreach ($prop in $object.PSObject.Properties) {
+        $key = if ($prefix) { "$prefix.$($prop.Name)" } else { $prop.Name }
+        $value = $prop.Value
+
+        if ($null -eq $value) {
+            $flattened[$key] = $null
+        }
+        elseif ($value -is [System.Collections.IEnumerable] -and !$value -is [string]) {
+            $flattened[$key] = ($value | ForEach-Object { $_.ToString() }) -join "; "
+        }
+        elseif ($value -is [psobject]) {
+            $nested = Flatten-Object -object $value -prefix $key
+            $nested.Keys | ForEach-Object { $flattened[$_] = $nested[$_] }
+        }
+        else {
+            $flattened[$key] = $value
+        }
+    }
+
+    return $flattened
+}
+
+# Process each domain
+foreach ($domain in $domains) {
+    $domain = $domain.Trim()
+
+    if (![string]::IsNullOrWhiteSpace($domain) -and (Is-ValidDomain $domain)) {
+        Write-Host "`nLooking up: $domain"
+
+        # Build the API request
+        $uriBuilder = New-Object System.UriBuilder($apiBaseUrl)
+        $query = [System.Web.HttpUtility]::ParseQueryString("")
+        $query["apiKey"] = $apiKey
+        $query["domainName"] = $domain
+        $query["outputFormat"] = "JSON"
+        $uriBuilder.Query = $query.ToString()
+        $uri = $uriBuilder.Uri.AbsoluteUri
+
+        try {
+            $response = Invoke-RestMethod -Uri $uri -Method Get
+
+            if ($response.WhoisRecord) {
+                $record = $response.WhoisRecord
+
+                # Save raw JSON for inspection (optional)
+                $rawJsonPath = Join-Path $rawOutputDir "$domain.json"
+                $response | ConvertTo-Json -Depth 10 | Out-File -FilePath $rawJsonPath -Encoding UTF8
+
+                # Flatten and store for CSV export
+                $flattenedRecord = Flatten-Object -object $record
+                $results += [PSCustomObject]$flattenedRecord
+            } else {
+                Write-Host "WHOIS lookup for $domain failed - no record returned."
+                $results += [PSCustomObject]@{
+                    domainName = $domain
+                    error      = "No WHOIS record returned"
+                }
+            }
+        } catch {
+            Write-Host "WHOIS lookup for $domain failed: $($_.Exception.Message)"
+            $results += [PSCustomObject]@{
+                domainName = $domain
+                error      = $_.Exception.Message
+            }
+        }
+
+        Start-Sleep -Seconds 1  # Avoid API rate limits
+    } else {
+        Write-Host "Skipping invalid domain: $domain"
+        $results += [PSCustomObject]@{
+            domainName = $domain
+            error      = "Invalid domain format"
+        }
+    }
+}
+
+# Export to CSV
+$results | Export-Csv -Path $outputCsv -NoTypeInformation -Encoding UTF8
+
+Write-Host "`n✅ WHOIS lookup complete."
+Write-Host "CSV exported to: $outputCsv"
+Write-Host "Raw JSON saved to: $rawOutputDir"
